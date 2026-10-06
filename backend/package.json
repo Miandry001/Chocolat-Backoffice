@@ -1,0 +1,21 @@
+{
+  "name": "chocolat-backend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test \"test/*.test.js\""
+  },
+  "dependencies": {
+    "express": "^5.0.0",
+    "express-rate-limit": "^7.0.0",
+    "helmet": "^8.0.0",
+    "mongoose": "^8.0.0"
+  },
+  "devDependencies": {
+    "mongodb-memory-server": "^10.0.0",
+    "supertest": "^7.0.0"
+  }
+}
