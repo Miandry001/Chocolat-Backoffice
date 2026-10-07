@@ -67,4 +67,16 @@ if (bootstrapLogin) {
     logger.info("bootstrap_admin_created");
   }
 }
-createApp(repos).listen(PORT, () => logger.info("api_started", { port: Number(PORT) }));
+// Le code en bas est uniquement à activer en local
+//createApp(repos).listen(PORT, () => logger.info("api_started", { port: Number(PORT) }));
+//Ce code est utiliser uniquement pour le déploiement sur Vercel(à supprimer si en local)
+
+const expressApp = createApp(repos);
+
+// 2. Lancez le .listen UNIQUEMENT en local
+if (!process.env.VERCEL) {
+  expressApp.listen(PORT, () => logger.info("api_started", { port: Number(PORT) }));
+}
+
+// 3. Exportez cette variable pour Vercel
+module.exports = expressApp;
