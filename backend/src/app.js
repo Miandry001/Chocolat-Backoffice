@@ -7,6 +7,7 @@ import { createAuthService } from "./services/authService.js";
 
 export function createApp(repos, { bodyLimit = process.env.JSON_BODY_LIMIT ?? "256kb", rateMax = 300, authSecret } = {}) {
   const app = express();
+  app.set("trust proxy", 1);
   const localSecret = process.env.NODE_ENV === "production" ? undefined : "local-dev-only-chocolat-jwt-secret-change-before-deploy";
   const authService = createAuthService(repos, { secret: authSecret ?? process.env.JWT_SECRET ?? localSecret });
   app.locals.authService = authService;
