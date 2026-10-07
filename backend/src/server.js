@@ -6,77 +6,54 @@ import { hashPassword, verifyPassword } from "./services/authService.js";
 import { User } from "./models/index.js";
 import { removeUniqueUserLoginIndexes } from "./migrations/userIndexes.js";
 
-try { process.loadEnvFile(); } catch { /* pas de .env : variables d'environnement du système */ }
-const { MONGODB_URI, PORT = 3001 } = process.env;
-if (!MONGODB_URI) { logger.error("MONGODB_URI manquant (voir .env.example)"); process.exit(1); }
-if (!process.env.JWT_SECRET || Buffer.byteLength(process.env.JWT_SECRET) < 32) {
-  logger.error("JWT_SECRET manquant ou trop court (32 octets minimum)"); process.exit(1);
-}
-if (process.env.NODE_ENV === "production") {
-  try {
-    const origin = new URL(process.env.APP_ORIGIN ?? "");
-    if (origin.protocol !== "https:" || origin.origin !== process.env.APP_ORIGIN) throw new Error("Invalid APP_ORIGIN");
-  } catch {
-    logger.error("APP_ORIGIN doit être l'origine HTTPS publique exacte de l'application"); process.exit(1);
-  }
-}
+let appPromise;
 
-try {
+async function bootstrap() {
+  const { MONGODB_URI, JWT_SECRET } = process.env;
+  if (!MONGODB_URI) throw new Error("MONGODB_URI manquant");
+  if (!JWT_SECRET || Buffer.byteLength(JWT_SECRET) < 32) {
+    throw new Error("JWT_SECRET manquant ou trop court (32 octets minimum)");
+  }
+
   await mongoose.connect(MONGODB_URI);
-} catch (error) {
-  const serverErrors = [...(error?.reason?.servers?.values?.() ?? [])]
-    .map((server) => server.error)
-    .filter(Boolean);
-  const tlsError = serverErrors.find((serverError) => String(serverError.code ?? "").startsWith("ERR_SSL_"));
-  logger.error("mongodb_connection_failed", {
-    errorType: error?.name ?? "Error",
-    cause: tlsError ? "tls_handshake_failed" : "server_selection_failed",
-    errorCode: tlsError?.code,
-    guidance: tlsError
-      ? "Vérifiez le réseau, le proxy/inspection TLS et l'accès TLS à MongoDB Atlas."
-      : "Vérifiez l'URI, les identifiants, le réseau et la liste d'accès IP MongoDB Atlas.",
-  });
-  process.exit(1);
-}
-const removedUserIndexes = await removeUniqueUserLoginIndexes(User.collection);
-if (removedUserIndexes.length) {
-  logger.info("legacy_user_login_unique_indexes_removed", { count: removedUserIndexes.length });
-}
-await Promise.all([mongoose.model("User").init(), mongoose.model("ActiveSession").init()]);
-const repos = createMongoRepos();
-const bootstrapLogin = process.env.AUTH_BOOTSTRAP_ADMIN_LOGIN?.trim().toLowerCase();
-const bootstrapPassword = process.env.AUTH_BOOTSTRAP_ADMIN_PASSWORD;
-if (Boolean(bootstrapLogin) !== Boolean(bootstrapPassword)) {
-  logger.error("AUTH_BOOTSTRAP_ADMIN_LOGIN et AUTH_BOOTSTRAP_ADMIN_PASSWORD doivent être configurés ensemble"); process.exit(1);
-}
-if (!bootstrapLogin || !bootstrapPassword || bootstrapPassword.length < 12) {
-  logger.error("Configurez le compte admin initial avec un mot de passe de 12 caractères minimum"); process.exit(1);
-}
-if (bootstrapLogin) {
-  const sameLogin = await repos.users.findByLoginCandidates(bootstrapLogin);
-  if (!sameLogin.some((user) => user.role === "ADMIN")) {
-    const sameName = await repos.users.findByName("Admin", "Principal");
-    for (const candidate of [...sameLogin, ...sameName]) {
-      if (await verifyPassword(bootstrapPassword, candidate.passwordHash)) {
-        logger.error("bootstrap_admin_credentials_conflict");
-        process.exit(1);
+  await removeUniqueUserLoginIndexes(User.collection);
+  await Promise.all([mongoose.model("User").init(), mongoose.model("ActiveSession").init()]);
+
+  const repos = createMongoRepos();
+
+  // Création de l'admin initial (si configuré)
+  const login = process.env.AUTH_BOOTSTRAP_ADMIN_LOGIN?.trim().toLowerCase();
+  const password = process.env.AUTH_BOOTSTRAP_ADMIN_PASSWORD;
+  if (login && password && password.length >= 12) {
+    const sameLogin = await repos.users.findByLoginCandidates(login);
+    if (!sameLogin.some((u) => u.role === "ADMIN")) {
+      const sameName = await repos.users.findByName("Admin", "Principal");
+      for (const c of [...sameLogin, ...sameName]) {
+        if (await verifyPassword(password, c.passwordHash)) {
+          throw new Error("bootstrap_admin_credentials_conflict");
+        }
       }
+      await repos.users.create({
+        login, firstName: "Admin", lastName: "Principal", fullName: "Admin Principal",
+        role: "ADMIN", passwordHash: await hashPassword(password), active: true,
+      });
+      logger.info("bootstrap_admin_created");
     }
-    const admin = { login: bootstrapLogin, firstName: "Admin", lastName: "Principal", fullName: "Admin Principal", role: "ADMIN", passwordHash: await hashPassword(bootstrapPassword), active: true };
-    await repos.users.create(admin);
-    logger.info("bootstrap_admin_created");
+  }
+
+  return createApp(repos);
+}
+
+export default async function handler(req, res) {
+  try {
+    appPromise ??= bootstrap();
+    const app = await appPromise;
+    return app(req, res);
+  } catch (error) {
+    appPromise = undefined; // permet de réessayer à la requête suivante
+    logger.error("vercel_bootstrap_failed", { message: error.message });
+    res.statusCode = 500;
+    res.setHeader("Content-Type", "application/json");
+    res.end(JSON.stringify({ error: "Server initialization failed" }));
   }
 }
-// Le code en bas est uniquement à activer en local
-//createApp(repos).listen(PORT, () => logger.info("api_started", { port: Number(PORT) }));
-//Ce code est utiliser uniquement pour le déploiement sur Vercel(à supprimer si en local)
-
-const expressApp = createApp(repos);
-
-// 2. Lancez le .listen UNIQUEMENT en local
-if (!process.env.VERCEL) {
-  expressApp.listen(PORT, () => logger.info("api_started", { port: Number(PORT) }));
-}
-
-// 3. Exportez cette variable pour Vercel
-module.exports = expressApp;
