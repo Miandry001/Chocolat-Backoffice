@@ -19,3 +19,5 @@ export function createApp(repos, { bodyLimit = process.env.JSON_BODY_LIMIT ?? "2
   app.use(errorHandler);
   return app;
 }
+//Export pour Vercel
+module.exports = app;
