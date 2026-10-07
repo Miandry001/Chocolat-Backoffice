@@ -3,7 +3,6 @@ import { buildFilledExcelWorkbook, EXCEL_MIME_TYPE } from "./excelExport.js";
 import {
   buildSubmittedValueUpdates,
   getUnselectedRowRanges,
-  isCompleteTreatmentSelection,
   sheetNameFromRange,
 } from "./sheetExport.js";
 
@@ -154,7 +153,7 @@ export function sheetsPlugin({ keyFile, sheetId, range, authApiTarget, appOrigin
     return body.data.treatments ?? [];
   }
 
-  async function createFilledCopy(treatments, allTreatments, server) {
+  async function createFilledCopy(treatments, server) {
     if (!activeSheetId) throw new Error("Aucun fichier source Google Sheets n’est configuré.");
     if (!driveFolderId) throw new Error("GOOGLE_DRIVE_FOLDER_ID doit désigner le dossier du Drive partagé pour les exports.");
     const rows = await loadSheet();
@@ -210,27 +209,25 @@ export function sheetsPlugin({ keyFile, sheetId, range, authApiTarget, appOrigin
           data: { data: updates.slice(offset, offset + 1_000) },
         });
       }
-      if (!isCompleteTreatmentSelection(treatments, allTreatments)) {
-        const requests = getUnselectedRowRanges(rows, treatments).map(({ startRow, count }) => ({
-          deleteDimension: {
-            range: {
-              sheetId: targetSheet.properties.sheetId,
-              dimension: "ROWS",
-              startIndex: startRow - 1,
-              endIndex: startRow - 1 + count,
-            },
+      const requests = getUnselectedRowRanges(rows, treatments).map(({ startRow, count }) => ({
+        deleteDimension: {
+          range: {
+            sheetId: targetSheet.properties.sheetId,
+            dimension: "ROWS",
+            startIndex: startRow - 1,
+            endIndex: startRow - 1 + count,
           },
-        }));
-        requests.push(...sheets
-          .filter(({ properties }) => properties.sheetId !== targetSheet.properties.sheetId)
-          .map(({ properties }) => ({ deleteSheet: { sheetId: properties.sheetId } })));
-        if (requests.length) {
-          await client.request({
-            url: `https://sheets.googleapis.com/v4/spreadsheets/${copy.id}:batchUpdate`,
-            method: "POST",
-            data: { requests },
-          });
-        }
+        },
+      }));
+      requests.push(...sheets
+        .filter(({ properties }) => properties.sheetId !== targetSheet.properties.sheetId)
+        .map(({ properties }) => ({ deleteSheet: { sheetId: properties.sheetId } })));
+      if (requests.length) {
+        await client.request({
+          url: `https://sheets.googleapis.com/v4/spreadsheets/${copy.id}:batchUpdate`,
+          method: "POST",
+          data: { requests },
+        });
       }
       return { client, copy };
     } catch (error) {
@@ -317,9 +314,6 @@ export function sheetsPlugin({ keyFile, sheetId, range, authApiTarget, appOrigin
         const filters = Object.fromEntries(["from", "to", "role", "agent"]
           .map((key) => [key, url.searchParams.get(key) ?? ""]));
         const treatments = await listExportTreatments(req, server, filters);
-        const allTreatments = Object.values(filters).some(Boolean)
-          ? await listExportTreatments(req, server, { from: "", to: "", role: "", agent: "" })
-          : treatments;
 
         if (format === "excel") {
           client = await auth.getClient();
@@ -333,13 +327,12 @@ export function sheetsPlugin({ keyFile, sheetId, range, authApiTarget, appOrigin
             await loadSheet(),
             treatments,
             range,
-            allTreatments,
           );
           const filename = `saisies-confiserie-${new Date().toISOString().slice(0, 10)}.xlsx`;
           return sendBinary(res, workbook, filename, treatments.length);
         }
 
-        ({ client, copy } = await createFilledCopy(treatments, allTreatments, server));
+        ({ client, copy } = await createFilledCopy(treatments, server));
 
         if (format === "google-sheets") {
           return send(res, 200, {

@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import mongoose from "mongoose";
-import { ActiveSession, AuditLog, DistributionGroup, FieldSuggestion, IdempotencyKey, Treatment, TreatmentVersion, User, ValidationResult } from "../models/index.js";
+import { ActiveSession, AuditLog, DistributionGroup, FieldSuggestion, IdempotencyKey, Notification, Treatment, TreatmentVersion, User, ValidationResult } from "../models/index.js";
 
 /**
  * Dépôts MongoDB avec support des transactions via AsyncLocalStorage.
@@ -28,6 +28,16 @@ export function createMongoRepos() {
           { $set: { status, updatedAt: new Date(), updatedBy: userId } },
           { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true },
         ).lean();
+      },
+    },
+
+    notifications: {
+      async insert(notification) {
+        await Notification.create([notification], opts());
+      },
+      async listForRecipient(recipientId, limit = 100) {
+        return Notification.find({ recipientId: String(recipientId) })
+          .sort({ date: -1 }).limit(limit).lean().exec();
       },
     },
 

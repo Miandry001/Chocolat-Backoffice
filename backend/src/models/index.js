@@ -161,6 +161,17 @@ const distributionGroupSchema = new Schema({
   updatedBy: { type: String, required: true },
 });
 
+const notificationSchema = new Schema({
+  recipientId: { type: String, required: true, index: true },
+  treatmentId: { type: Schema.Types.ObjectId, required: true },
+  type: { type: String, enum: ["CORRECTION_REQUESTED", "CORRECTION_RESUBMITTED"], required: true },
+  text: { type: String, required: true, maxlength: 300 },
+  message: { type: String, required: true, maxlength: 2000 },
+  link: { type: String, required: true, maxlength: 200 },
+  date: { type: Date, required: true, default: Date.now },
+});
+notificationSchema.index({ recipientId: 1, date: -1 });
+
 // Export des modèles Mongoose
 export const Treatment = mongoose.model("Treatment", treatmentSchema);
 export const TreatmentVersion = mongoose.model("TreatmentVersion", versionSchema);
@@ -171,3 +182,4 @@ export const FieldSuggestion = mongoose.model("FieldSuggestion", fieldSuggestion
 export const User = mongoose.model("User", userSchema);
 export const ActiveSession = mongoose.model("ActiveSession", activeSessionSchema);
 export const DistributionGroup = mongoose.model("DistributionGroup", distributionGroupSchema);
+export const Notification = mongoose.model("Notification", notificationSchema);

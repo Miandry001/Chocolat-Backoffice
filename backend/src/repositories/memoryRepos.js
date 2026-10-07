@@ -5,7 +5,7 @@
  */
 export function createMemoryRepos({ users: initialUsers = [] } = {}) {
   // Stockage en mémoire
-  const db = { treatments: [], versions: [], audits: [], validations: [], distributionGroups: new Map(), idem: new Map(), suggestions: new Map(), users: new Map(), sessions: new Map() };
+  const db = { treatments: [], versions: [], audits: [], validations: [], notifications: [], distributionGroups: new Map(), idem: new Map(), suggestions: new Map(), users: new Map(), sessions: new Map() };
   let seq = 0;
   const id = () => `mem_${++seq}`;
   const clone = (o) => (o ? structuredClone(o) : o);
@@ -21,6 +21,17 @@ export function createMemoryRepos({ users: initialUsers = [] } = {}) {
         const group = { groupStart, status, updatedAt: new Date(), updatedBy: String(userId) };
         db.distributionGroups.set(groupStart, group);
         return clone(group);
+      },
+    },
+
+    notifications: {
+      async insert(notification) { db.notifications.push({ ...clone(notification), _id: id() }); },
+      async listForRecipient(recipientId, limit = 100) {
+        return db.notifications
+          .filter((notification) => String(notification.recipientId) === String(recipientId))
+          .sort((left, right) => new Date(right.date) - new Date(left.date))
+          .slice(0, limit)
+          .map(clone);
       },
     },
 
@@ -68,7 +79,7 @@ export function createMemoryRepos({ users: initialUsers = [] } = {}) {
       try { return await fn(); }
       catch (e) { // Rollback sur erreur
         Object.assign(db, { treatments: snapshot.treatments, versions: snapshot.versions, audits: snapshot.audits,
-          validations: snapshot.validations, idem: new Map(snapshot.idem) });
+          validations: snapshot.validations, notifications: snapshot.notifications, idem: new Map(snapshot.idem) });
         throw e;
       }
     },

@@ -5,6 +5,7 @@ import { makeAuthController } from "../controllers/authController.js";
 import { makeQualityController } from "../controllers/qualityController.js";
 import { makeDistributionGroupController } from "../controllers/distributionGroupController.js";
 import { makeDataExportController } from "../controllers/dataExportController.js";
+import { makeNotificationsController } from "../controllers/notificationsController.js";
 import { makeAuthenticate, requireCsrf, requireRoles, requireTrustedOrigin } from "../middlewares/auth.js";
 import labelRoutes from "./labelRoutes.js";
 
@@ -22,6 +23,7 @@ export function buildRouter(repos, authService) {
   const quality = makeQualityController(repos);
   const distributionGroups = makeDistributionGroupController(repos);
   const dataExport = makeDataExportController(repos);
+  const notifications = makeNotificationsController(repos);
   const r = Router();
 
   // Health check : retourne le mode de stockage (mongodb/memory)
@@ -45,6 +47,7 @@ export function buildRouter(repos, authService) {
   // Statistiques dashboard
   r.get("/stats/summary", stats.summary);
   r.get("/stats/agents", stats.agents);
+  r.get("/notifications", notifications.list);
   r.get("/quality/treatments", quality.list);
   r.post("/quality/treatments/:sourceRow/return", requireRoles("ADMIN", "SUPERVISEUR"), quality.returnForCorrection);
   r.get("/distribution-groups", distributionGroups.list);

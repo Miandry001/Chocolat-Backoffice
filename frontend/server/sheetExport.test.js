@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import {
   buildSubmittedValueUpdates,
   getUnselectedRowRanges,
-  isCompleteTreatmentSelection,
 } from "./sheetExport.js";
 
 test("export updates submitted cells at their source row and preserves all other cells", () => {
@@ -68,15 +67,12 @@ test("export appends the Label field to the copied sheet and omits the workflow-
   assert.deepEqual(rows[0], ["NOM", "EAN13"]);
 });
 
-test("filtered export identifies omitted source rows and recognizes complete selections", () => {
+test("filtered export identifies omitted source rows", () => {
   const rows = [["NOM"], ["un",], ["deux"], ["trois"], ["quatre"], ["cinq"]];
-  const allTreatments = [2, 3, 4, 5, 6].map((sourceRow) => ({ sourceRow }));
   const filteredTreatments = [2, 4, 5].map((sourceRow) => ({ sourceRow }));
 
   assert.deepEqual(getUnselectedRowRanges(rows, filteredTreatments), [
     { startRow: 6, count: 1 },
     { startRow: 3, count: 1 },
   ]);
-  assert.equal(isCompleteTreatmentSelection(filteredTreatments, allTreatments), false);
-  assert.equal(isCompleteTreatmentSelection(allTreatments, allTreatments), true);
 });

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import ExcelJS from "exceljs";
 import { buildFilledExcelWorkbook } from "./excelExport.js";
 
-test("Excel export applies filtered values locally and preserves untouched sheets and cells", async () => {
+test("Excel export keeps only selected treatment rows and removes unrelated worksheets", async () => {
   const sourceWorkbook = new ExcelJS.Workbook();
   const targetSheet = sourceWorkbook.addWorksheet("référent");
   targetSheet.addRow(["NOM", "EAN13"]);
@@ -37,42 +37,45 @@ test("Excel export applies filtered values locally and preserves untouched sheet
   assert.equal(exported.getWorksheet("référent").getCell("E1").value, "DATE DE TRAITEMENT");
   assert.equal(exported.getWorksheet("référent").getCell("E2").value, "2026-10-06T07:15:00.000Z");
   assert.equal(exported.getWorksheet("référent").getCell("A1").font.bold, true);
-  assert.equal(exported.getWorksheet("Autre onglet").getCell("A1").value, "préservé");
+  assert.equal(exported.getWorksheet("Autre onglet"), undefined);
+  assert.equal(exported.getWorksheet("référent").rowCount, 2);
 });
 
-test("a partial selection exports only matching data rows and removes unrelated worksheets", async () => {
+test("export contains only the selected rows even when they are all eligible submissions", async () => {
   const sourceWorkbook = new ExcelJS.Workbook();
   const targetSheet = sourceWorkbook.addWorksheet("référent");
-  targetSheet.addRows([
-    ["NOM", "EAN13"],
-    ["", "1234567890123"],
-    ["", "9876543210123"],
-    ["", "1122334455667"],
-  ]);
+  const sourceRows = [["NOM", "EAN13"]];
+  for (let sourceRow = 2; sourceRow <= 5_709; sourceRow += 1) {
+    sourceRows.push(["", `EAN-${sourceRow}`]);
+  }
+  targetSheet.addRows(sourceRows);
   sourceWorkbook.addWorksheet("Autre onglet").getCell("A1").value = "hors filtre";
 
   const result = await buildFilledExcelWorkbook(Buffer.from(await sourceWorkbook.xlsx.writeBuffer()), [
-    ["NOM", "EAN13"],
-    ["", "1234567890123"],
-    ["", "9876543210123"],
-    ["", "1122334455667"],
-  ], [{
-    sourceRow: 3,
-    currentData: [{ k: "NOM", v: "CHOCOLAT FILTRÉ" }],
-    agentName: "Jean Dupont",
-    treatmentDate: "2026-10-06T07:15:00.000Z",
-  }], "'référent'!A:ZZ", [
-    { sourceRow: 2, currentData: [] },
-    { sourceRow: 3, currentData: [] },
-    { sourceRow: 4, currentData: [] },
-  ]);
+    ...sourceRows,
+  ], [
+    {
+      sourceRow: 12,
+      currentData: [{ k: "NOM", v: "CHOCOLAT FILTRÉ 1" }],
+      agentName: "Jean Dupont",
+      treatmentDate: "2026-10-06T07:15:00.000Z",
+    },
+    {
+      sourceRow: 5_709,
+      currentData: [{ k: "NOM", v: "CHOCOLAT FILTRÉ 2" }],
+      agentName: "Marie Martin",
+      treatmentDate: "2026-10-06T07:15:00.000Z",
+    },
+  ], "'référent'!A:ZZ");
 
   const exported = new ExcelJS.Workbook();
   await exported.xlsx.load(result);
   const worksheet = exported.getWorksheet("référent");
+  assert.equal(worksheet.rowCount, 3);
   assert.deepEqual(worksheet.getSheetValues().slice(1).map((row) => row.slice(1)), [
     ["NOM", "EAN13", "NUMERO DE LIGNE SOURCE", "DATE DE TRAITEMENT"],
-    ["Jean Dupont", "9876543210123", 3, "2026-10-06T07:15:00.000Z"],
+    ["Jean Dupont", "EAN-12", 12, "2026-10-06T07:15:00.000Z"],
+    ["Marie Martin", "EAN-5709", 5_709, "2026-10-06T07:15:00.000Z"],
   ]);
   assert.equal(exported.getWorksheet("Autre onglet"), undefined);
 });

@@ -31,6 +31,17 @@ test("quality queue returns submitted treatments with their latest validation an
 
 test("quality return stores feedback, changes status, records audit and is exposed to the agent", async () => {
   const repos = createMemoryRepos();
+  const { client } = await authenticatedClient(repos);
+  await repos.users.create({
+    id: "test-agent",
+    login: "quality-agent",
+    passwordHash: await hashPassword("agent-password-123"),
+    firstName: "Jean",
+    lastName: "Dupont",
+    fullName: "Jean Dupont",
+    role: "AGENT",
+    active: true,
+  });
   await repos.treatments.insert({
     sourceRow: 8,
     status: "SUBMITTED",
@@ -39,7 +50,6 @@ test("quality return stores feedback, changes status, records audit and is expos
     lastUpdatedAt: new Date(),
     lastUpdatedBy: { actorId: "test-agent", actorType: "AGENT" },
   });
-  const { client } = await authenticatedClient(repos);
 
   const response = await client.post("/api/v1/quality/treatments/8/return").send({ message: "Vérifier le nom." }).expect(200);
   assert.equal(response.body.data.statusAfterReturn, "CORRECTION_REQUIRED");
@@ -50,6 +60,14 @@ test("quality return stores feedback, changes status, records audit and is expos
 
   const reopened = await client.get("/api/v1/data/row/8").expect(200);
   assert.equal(reopened.body.data.treatment.qualityFeedback.message, "Vérifier le nom.");
+
+  const agentClient = await authenticatedClient(repos, { login: "quality-agent", password: "agent-password-123" });
+  const agentNotifications = await agentClient.client.get("/api/v1/notifications").expect(200);
+  assert.equal(agentNotifications.body.data.notifications.length, 1);
+  assert.equal(agentNotifications.body.data.notifications[0].message, "Vérifier le nom.");
+  assert.equal(agentNotifications.body.data.notifications[0].link, "/distribution/groupe/1/ligne/7");
+  const reviewerNotifications = await client.get("/api/v1/notifications").expect(200);
+  assert.deepEqual(reviewerNotifications.body.data.notifications, []);
 });
 
 test("quality return validates feedback and refuses treatments outside the QC queue", async () => {

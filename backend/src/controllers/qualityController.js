@@ -1,5 +1,6 @@
 import { ACTOR_TYPE, TREATMENT_STATUS } from "../constants/index.js";
 import { ok, fail } from "../utils/response.js";
+import { distributionLinePath } from "../utils/distributionLine.js";
 
 const MAX_FEEDBACK_LENGTH = 2000;
 const PAGE_SIZE = 100;
@@ -75,11 +76,23 @@ export function makeQualityController(repos) {
           const timestamp = new Date();
           const actor = { actorId: req.auth.id, actorType: req.auth.role === "ADMIN" ? ACTOR_TYPE.ADMIN : ACTOR_TYPE.QC };
           const feedback = { message: message.trim(), createdAt: timestamp, createdBy: actor };
+          const agentId = treatment.lastUpdatedBy?.actorId;
           await repos.treatments.update(treatment._id, {
             status: TREATMENT_STATUS.CORRECTION_REQUIRED,
             qualityFeedback: feedback,
             lastUpdatedAt: timestamp,
           });
+          if (treatment.lastUpdatedBy?.actorType === ACTOR_TYPE.AGENT && agentId) {
+            await repos.notifications.insert({
+              recipientId: String(agentId),
+              treatmentId: treatment._id,
+              type: "CORRECTION_REQUESTED",
+              text: `Retour du contrôle qualité — Ligne ${sourceRow - 1}`,
+              message: feedback.message,
+              link: distributionLinePath(sourceRow),
+              date: timestamp,
+            });
+          }
           await repos.audits.insertMany([
             {
               entityType: "TREATMENT",

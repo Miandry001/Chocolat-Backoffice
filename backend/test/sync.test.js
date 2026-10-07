@@ -88,6 +88,35 @@ test("resubmission clears the displayed QC feedback while preserving its audit r
   assert.ok(r._db.audits.some(({ action, newValue }) => action === "COMMENT_ADDED" && newValue === "Corriger le nom"));
 });
 
+test("resubmission notifies only the reviewer who requested correction with the agent and line link", async () => {
+  const r = createMemoryRepos();
+  await r.users.create({ id: "agent-1", login: "agent", firstName: "Jean", lastName: "Dupont", fullName: "Jean Dupont", role: "AGENT", active: true });
+  await r.users.create({ id: "reviewer-1", login: "reviewer", firstName: "Super", lastName: "Viseur", fullName: "Super Viseur", role: "SUPERVISEUR", active: true });
+  const correctingAgent = { actorId: "agent-1", actorType: "AGENT" };
+  await r.treatments.insert({
+    sourceRow: 8,
+    status: "CORRECTION_REQUIRED",
+    currentVersion: 1,
+    currentData: Object.entries(full()).map(([k, v]) => ({ k, v })),
+    lastUpdatedAt: new Date(),
+    lastUpdatedBy: correctingAgent,
+    qualityFeedback: {
+      message: "Vérifier le nom.",
+      createdAt: new Date(),
+      createdBy: { actorId: "reviewer-1", actorType: "QC" },
+    },
+  });
+
+  const result = await syncTreatment(r, { sourceRow: 8, values: full(), submit: true, actor: correctingAgent });
+
+  assert.equal(result.status, "RESUBMITTED");
+  assert.equal(r._db.notifications.length, 1);
+  assert.equal(r._db.notifications[0].recipientId, "reviewer-1");
+  assert.equal(r._db.notifications[0].text, "Correction apportée au niveau de la ligne 7 de Jean Dupont");
+  assert.equal(r._db.notifications[0].link, "/distribution/groupe/1/ligne/7");
+  assert.deepEqual(await r.notifications.listForRecipient("agent-1"), []);
+});
+
 test("une ligne soumise, en contrôle, approuvée ou rejetée peut être corrigée et renvoyée", async () => {
   for (const status of ["SUBMITTED", "IN_QC", "RESUBMITTED", "APPROVED", "REJECTED"]) {
     const r = createMemoryRepos();

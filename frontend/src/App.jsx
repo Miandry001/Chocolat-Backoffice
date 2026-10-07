@@ -18,6 +18,7 @@ import MonitoringPage from "./pages/MonitoringPage.jsx";
 import StatisticsPage from "./pages/StatisticsPage.jsx";
 import { DocsPanel } from "./components/ui/DocsPanel.jsx";
 import { userErrorMessage } from "./utils/clientErrors.js";
+import { buildFilteredAgentRows } from "./utils/agentStatistics.js";
 
 function readCookie(name) {
   const prefix = `${name}=`;
@@ -32,16 +33,6 @@ async function authenticatedFetch(url, options = {}) {
   }
   return fetch(url, { ...options, headers, credentials: "same-origin" });
 }
-
-const defaultNotifications = [
-  {
-    id: 1,
-    text: "Retour du contrôle qualité — Ligne 8",
-    message: "Merci de vérifier le champ INFO FOURRAGE : la valeur indique une pluralité. Confirme que l’ingrédient est bien au pluriel ou corrige la saisie, puis renvoie la ligne pour un nouveau contrôle.",
-    date: "2026-10-02T08:52:00",
-    link: "/distribution/groupe/1/ligne/8",
-  },
-];
 
 function getRoleLabel(role) {
   if (role === "SUPERVISEUR") return "Superviseur";
@@ -95,7 +86,7 @@ function getNavigation(role) {
   return base;
 }
 
-function NotificationBell({ notifications }) {
+function NotificationBell({ notifications, error }) {
   const [open, setOpen] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
   const ref = useRef(null);
@@ -120,7 +111,9 @@ function NotificationBell({ notifications }) {
       {open && (
         <div className="notification__panel" role="dialog" aria-label="Notifications">
           <div className="notification__header">Notifications</div>
-          {notifications.length === 0 ? (
+          {error ? (
+            <p className="notification__empty" role="alert">{error}</p>
+          ) : notifications.length === 0 ? (
             <p className="notification__empty">Aucune notification.</p>
           ) : (
             <ul className="notification__list">
@@ -149,7 +142,7 @@ function NotificationBell({ notifications }) {
   );
 }
 
-function AppShell({ user, notifications, onLogout, children }) {
+function AppShell({ user, notifications, notificationError, onLogout, children }) {
   const [now, setNow] = useState(new Date());
   const navItems = useMemo(() => getNavigation(user.role), [user.role]);
 
@@ -169,7 +162,7 @@ function AppShell({ user, notifications, onLogout, children }) {
           ))}
         </nav>
         <div className="topbar__tools">
-          <NotificationBell notifications={notifications} />
+          <NotificationBell notifications={notifications} error={notificationError} />
           <button className="btn btn--ghost" type="button" onClick={onLogout}>Déconnexion</button>
         </div>
       </header>
@@ -579,23 +572,10 @@ function DataPage({ users = [] }) {
     return () => controller.abort();
   }, [appliedFilters.startDate, appliedFilters.endDate]);
 
-  const filteredRows = useMemo(() => {
-    const usersById = new Map(users.map((entry) => [String(entry.id), entry]));
-    return performance.flatMap((agent) => {
-      const profile = usersById.get(String(agent.actorId));
-      const fullName = profile?.fullName || `${profile?.firstName ?? ""} ${profile?.lastName ?? ""}`.trim() || profile?.login || "Agent";
-      if (appliedFilters.role && profile?.role !== appliedFilters.role) return [];
-      if (appliedFilters.agent && !fullName.toLowerCase().includes(appliedFilters.agent.trim().toLowerCase())) return [];
-      return agent.daily.map((day) => ({
-        date: day.date,
-        lines: day.validatedLines,
-        returns: day.correctedReturns ?? 0,
-        agent: fullName,
-        agentId: agent.actorId,
-        role: profile?.role ?? "AGENT",
-      }));
-    }).sort((left, right) => right.date.localeCompare(left.date) || left.agent.localeCompare(right.agent));
-  }, [performance, users, appliedFilters.role, appliedFilters.agent]);
+  const filteredRows = useMemo(
+    () => buildFilteredAgentRows(performance, users, appliedFilters),
+    [performance, users, appliedFilters.role, appliedFilters.agent],
+  );
   const invalidRange = filters.startDate && filters.endDate && filters.startDate > filters.endDate;
 
   return (
@@ -606,7 +586,7 @@ function DataPage({ users = [] }) {
           <section className="data-export">
             <div>
               <h3>Exporter les saisies filtrées</h3>
-              <p>L’export conserve uniquement les lignes correspondant aux filtres appliqués (période, rôle et agent). Le nom de l’agent apparaît dans la colonne NOM, avec la date de traitement et le numéro de ligne source pour faciliter le rapprochement. Si les filtres couvrent toutes les soumissions exportables, le classeur complet est conservé. Les brouillons, corrections demandées et lignes rejetées sont exclus ; l’original n’est jamais modifié.</p>
+              <p>L’export en format Excel (.xlsx) est actuellement disponible.</p>
             </div>
             <div className="toolbar data-export__controls">
               <label className="data-export__format">
@@ -657,7 +637,6 @@ function DataPage({ users = [] }) {
             <input
               className="control"
               type="text"
-              placeholder="Agent"
               value={filters.agent}
               onChange={(event) => setFilters((current) => ({ ...current, agent: event.target.value }))}
             />
@@ -673,23 +652,21 @@ function DataPage({ users = [] }) {
           <table className="data-table">
             <thead>
               <tr>
-                <th>Date</th>
-                <th>Lignes validées</th>
-                <th>Retours</th>
                 <th>Agent</th>
+                <th>Lignes validées</th>
+                <th>Retours rectifiés</th>
               </tr>
             </thead>
             <tbody>
               {filteredRows.map((row) => (
-                <tr key={`${row.agentId}-${row.date}`}>
-                  <td>{row.date}</td>
+                <tr key={row.agentId}>
+                  <td>{row.agent}</td>
                   <td>{row.lines}</td>
                   <td>{row.returns}</td>
-                  <td>{row.agent}</td>
                 </tr>
               ))}
               {!loading && !error && filteredRows.length === 0 && (
-                <tr><td colSpan="4">Aucune donnée ne correspond aux filtres.</td></tr>
+                <tr><td colSpan="3">Aucune donnée ne correspond aux filtres.</td></tr>
               )}
             </tbody>
           </table>
@@ -964,16 +941,8 @@ function Application() {
   const [users, setUsers] = useState([]);
   const [user, setUser] = useState(null);
   const [authChecking, setAuthChecking] = useState(true);
-  const [notifications, setNotifications] = useState(() => {
-    try {
-      const savedNotifications = JSON.parse(window.localStorage.getItem("chocolat-notifications") ?? "null");
-      return Array.isArray(savedNotifications) && savedNotifications.every((item) => item.message)
-        ? savedNotifications
-        : defaultNotifications;
-    } catch {
-      return defaultNotifications;
-    }
-  });
+  const [notifications, setNotifications] = useState([]);
+  const [notificationError, setNotificationError] = useState("");
 
   useEffect(() => {
     const controller = new AbortController();
@@ -1013,8 +982,39 @@ function Application() {
   }, []);
 
   useEffect(() => {
-    window.localStorage.setItem("chocolat-notifications", JSON.stringify(notifications));
-  }, [notifications]);
+    if (!user?.id) {
+      setNotifications([]);
+      setNotificationError("");
+      return undefined;
+    }
+
+    const controller = new AbortController();
+    const loadNotifications = async () => {
+      try {
+        const response = await fetch("/api/v1/notifications", {
+          credentials: "same-origin",
+          signal: controller.signal,
+        });
+        const body = await response.json();
+        if (!response.ok || !body.success) {
+          throw new Error(body.errors?.[0]?.message ?? `Erreur ${response.status}`);
+        }
+        setNotifications(body.data.notifications ?? []);
+        setNotificationError("");
+      } catch (error) {
+        if (error.name !== "AbortError") {
+          setNotificationError(userErrorMessage("notifications-load", error));
+        }
+      }
+    };
+
+    loadNotifications();
+    const interval = window.setInterval(loadNotifications, 30_000);
+    return () => {
+      controller.abort();
+      window.clearInterval(interval);
+    };
+  }, [user?.id]);
 
   const saveDraft = async (sourceIndex, values, submit = false) => {
     const sourceRow = sourceIndex + 1;
@@ -1070,7 +1070,7 @@ function Application() {
     }
     setUser(null);
     setUsers([]);
-    setNotifications(defaultNotifications);
+    setNotifications([]);
   };
 
   const handleLogin = async (authenticatedUser) => {
@@ -1088,24 +1088,24 @@ function Application() {
     <>
       <Route path="/" element={<Navigate to="/accueil" replace />} />
       <Route path="/login" element={<Navigate to="/accueil" replace />} />
-      <Route path="/accueil" element={<AppShell user={user} notifications={notifications} onLogout={handleLogout}><HomePage user={user} storageMode={storageMode} /></AppShell>} />
-      <Route path="/distribution" element={<AppShell user={user} notifications={notifications} onLogout={handleLogout}><DistributionHomePage onLoadGroupStatuses={loadDistributionGroupStatuses} onSaveGroupStatus={saveDistributionGroupStatus} /></AppShell>} />
-      <Route path="/distribution/groupe/:groupStart" element={<AppShell user={user} notifications={notifications} onLogout={handleLogout}><DistributionGroupPage /></AppShell>} />
-      <Route path="/distribution/groupe/:groupStart/ligne/:index" element={<AppShell user={user} notifications={notifications} onLogout={handleLogout}><DistributionLinePage storageMode={storageMode} onSave={saveDraft} /></AppShell>} />
-      <Route path="/qualite" element={<AppShell user={user} notifications={notifications} onLogout={handleLogout}><QualityPage users={users} user={user} /></AppShell>} />
-      <Route path="/statistiques" element={<AppShell user={user} notifications={notifications} onLogout={handleLogout}><StatisticsPage users={users} user={user} /></AppShell>} />
+      <Route path="/accueil" element={<AppShell user={user} notifications={notifications} notificationError={notificationError} onLogout={handleLogout}><HomePage user={user} storageMode={storageMode} /></AppShell>} />
+      <Route path="/distribution" element={<AppShell user={user} notifications={notifications} notificationError={notificationError} onLogout={handleLogout}><DistributionHomePage onLoadGroupStatuses={loadDistributionGroupStatuses} onSaveGroupStatus={saveDistributionGroupStatus} /></AppShell>} />
+      <Route path="/distribution/groupe/:groupStart" element={<AppShell user={user} notifications={notifications} notificationError={notificationError} onLogout={handleLogout}><DistributionGroupPage /></AppShell>} />
+      <Route path="/distribution/groupe/:groupStart/ligne/:index" element={<AppShell user={user} notifications={notifications} notificationError={notificationError} onLogout={handleLogout}><DistributionLinePage storageMode={storageMode} onSave={saveDraft} /></AppShell>} />
+      <Route path="/qualite" element={<AppShell user={user} notifications={notifications} notificationError={notificationError} onLogout={handleLogout}><QualityPage users={users} user={user} /></AppShell>} />
+      <Route path="/statistiques" element={<AppShell user={user} notifications={notifications} notificationError={notificationError} onLogout={handleLogout}><StatisticsPage users={users} user={user} /></AppShell>} />
       {(user.role === "SUPERVISEUR" || user.role === "ADMIN") && (
         <>
-          <Route path="/donnees" element={<AppShell user={user} notifications={notifications} onLogout={handleLogout}><DataPage users={users} /></AppShell>} />
+          <Route path="/donnees" element={<AppShell user={user} notifications={notifications} notificationError={notificationError} onLogout={handleLogout}><DataPage users={users} /></AppShell>} />
         </>
       )}
       {(user.role === "ADMIN" || user.role === "SUPERVISEUR") && (
-        <Route path="/utilisateurs" element={<AppShell user={user} notifications={notifications} onLogout={handleLogout}><UserManagementPage users={users} setUsers={setUsers} currentUser={user} /></AppShell>} />
+        <Route path="/utilisateurs" element={<AppShell user={user} notifications={notifications} notificationError={notificationError} onLogout={handleLogout}><UserManagementPage users={users} setUsers={setUsers} currentUser={user} /></AppShell>} />
       )}
       {user.role === "ADMIN" && (
         <>
-          <Route path="/connexion-sheet" element={<AppShell user={user} notifications={notifications} onLogout={handleLogout}><GoogleSheetConnectionPage /></AppShell>} />
-          <Route path="/monitoring" element={<AppShell user={user} notifications={notifications} onLogout={handleLogout}><MonitoringPage storageMode={storageMode} /></AppShell>} />
+          <Route path="/connexion-sheet" element={<AppShell user={user} notifications={notifications} notificationError={notificationError} onLogout={handleLogout}><GoogleSheetConnectionPage /></AppShell>} />
+          <Route path="/monitoring" element={<AppShell user={user} notifications={notifications} notificationError={notificationError} onLogout={handleLogout}><MonitoringPage storageMode={storageMode} /></AppShell>} />
         </>
       )}
       <Route path="*" element={<Navigate to="/accueil" replace />} />

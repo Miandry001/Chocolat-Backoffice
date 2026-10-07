@@ -4,6 +4,7 @@ import { diffValues } from "../diff/diffEngine.js";
 import { runRules } from "../rules/index.js";
 import { normalizeValues } from "../utils/normalize.js";
 import { toKV, fromKV } from "../utils/kv.js";
+import { distributionLinePath } from "../utils/distributionLine.js";
 
 /**
  * Erreur métier du domaine (différente des erreurs de validation technique).
@@ -109,7 +110,27 @@ export async function syncTreatment(repos, { sourceRow, values, submit = false, 
       // Mise à jour existant
       const patch = { status: target, currentVersion: version, currentData: toKV(merged), lastUpdatedAt: at, lastUpdatedBy: who,
         errorSummary: summarize(errors) };
-      if (submit && wasReturnedForCorrection) patch.qualityFeedback = null;
+      if (submit && wasReturnedForCorrection) {
+        patch.qualityFeedback = null;
+        const reviewerId = existing.qualityFeedback?.createdBy?.actorId;
+        if (reviewerId && ["QC", "ADMIN"].includes(existing.qualityFeedback?.createdBy?.actorType)) {
+          const agent = await repos.users.findById(who.actorId);
+          const agentName = agent?.fullName
+            || `${agent?.firstName ?? ""} ${agent?.lastName ?? ""}`.trim()
+            || agent?.login
+            || "Agent";
+          const line = sourceRow - 1;
+          await repos.notifications.insert({
+            recipientId: String(reviewerId),
+            treatmentId: existing._id,
+            type: "CORRECTION_RESUBMITTED",
+            text: `Correction apportée au niveau de la ligne ${line} de ${agentName}`,
+            message: `${agentName} a renvoyé la ligne ${line} après le retour du contrôle qualité.`,
+            link: distributionLinePath(sourceRow),
+            date: at,
+          });
+        }
+      }
       // Si première soumission, enregistre les données de première soumission
       if (submit && !existing.firstSubmittedAt) Object.assign(patch, { firstSubmittedAt: at, firstSubmittedBy: who, firstSubmittedData: toKV(merged) });
       await repos.treatments.update(existing._id, patch);

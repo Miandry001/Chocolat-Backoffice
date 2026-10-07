@@ -119,8 +119,9 @@ Toutes les routes sont montées sous `/api/v1` par `buildRouter()` dans
 | `POST /users` | Admin, Superviseur | Création ; un Superviseur ne peut créer que des Agents. |
 | `PATCH /users/:id`, `DELETE /users/:id` | Admin | Modification ou suppression d’un utilisateur. |
 | `GET /stats/summary`, `GET /stats/agents` | session | KPI globaux ou performance par agent et période. |
+| `GET /notifications` | session | Notifications de correction destinées uniquement à l’utilisateur connecté. |
 | `GET /quality/treatments` | session | File paginée des traitements en attente de contrôle. |
-| `POST /quality/treatments/:sourceRow/return` | Admin, Superviseur | Retour avec commentaire pour correction. |
+| `POST /quality/treatments/:sourceRow/return` | Admin, Superviseur | Retour avec commentaire pour correction ; crée une notification visible uniquement par l’Agent responsable. |
 | `GET /distribution-groups` | session | Statuts des blocs. |
 | `PUT /distribution-groups/:groupStart/status` | session + CSRF | Mise à jour du statut d’un bloc valide. |
 | `/labels`, `/labels/calculate` | session + CSRF pour calcul | Référentiel des labels et informations calculées. |
@@ -145,7 +146,8 @@ message interne et les traces ne sont pas renvoyés au client.
 | `buildRouter(repos, authService)` | [`backend/src/routes/index.js`](./backend/src/routes/index.js) | Instancie les contrôleurs et monte les routes API. Installe l’authentification et la vérification CSRF avant les routes privées, puis applique les rôles sur les opérations sensibles. |
 | `makeDataController(repos)` | [`backend/src/controllers/dataController.js`](./backend/src/controllers/dataController.js) | Fabrique les handlers `sync`, `getBySourceRow`, `suggestions` et `validate`. Adapte validation HTTP et services aux réponses API. |
 | `makeAuthController(authService)` | [`backend/src/controllers/authController.js`](./backend/src/controllers/authController.js) | Fabrique login, session, logout et opérations utilisateurs. `validateUser()` contrôle nom, prénom, login, rôle et politique de mot de passe; `invalid()` produit une réponse 400. La création traduit les conflits métier en 409. |
-| `makeQualityController(repos)` | [`backend/src/controllers/qualityController.js`](./backend/src/controllers/qualityController.js) | `list()` pagine la file QC et joint la dernière validation; `returnForCorrection()` vérifie le commentaire/la ligne, effectue le changement de statut et les événements d’audit en transaction. `valuesFromKV()` et `toQueueItem()` préparent le format consommé par le frontend. |
+| `makeQualityController(repos)` | [`backend/src/controllers/qualityController.js`](./backend/src/controllers/qualityController.js) | `list()` pagine la file QC et joint la dernière validation; `returnForCorrection()` vérifie le commentaire/la ligne, effectue le changement de statut et les événements d’audit en transaction, puis notifie l’Agent ayant soumis la ligne. `valuesFromKV()` et `toQueueItem()` préparent le format consommé par le frontend. |
+| `makeNotificationsController(repos)` | [`backend/src/controllers/notificationsController.js`](./backend/src/controllers/notificationsController.js) | Retourne uniquement les notifications du destinataire authentifié, avec un nombre maximal de résultats. |
 | `makeStatsController(repos)` | [`backend/src/controllers/statsController.js`](./backend/src/controllers/statsController.js) | `agents()` valide la plage et filtre les Agents sur leur propre profil; `summary()` limite aussi l’Agent à ses propres KPI. `parseDate()` valide une date calendrier; `summarizeAgent()` calcule taux qualité, jours actifs et meilleurs/pires jours; `yesterdayWindow()` calcule la veille au fuseau Nairobi. |
 | `makeDistributionGroupController(repos)` | [`backend/src/controllers/distributionGroupController.js`](./backend/src/controllers/distributionGroupController.js) | `list()` normalise l’ancien statut `VALIDE`; `update()` valide le début de bloc, le statut puis délègue au dépôt. `isValidGroupStart()` vérifie l’alignement sur une tranche de 50. |
 | `makeDataExportController(repos)` | [`backend/src/controllers/dataExportController.js`](./backend/src/controllers/dataExportController.js) | `listSubmitted()` prépare une réponse minimale à partir des traitements éligibles à l’export. |
@@ -208,6 +210,7 @@ dépôt mémoire prend un snapshot et restaure les collections/map si l’opéra
 | `treatments` | `findByRow`, `listForQuality`, `listForExport`, `insert`, `update`, `findFieldValuesByPrefix` | État courant, file qualité, traitements exportables et suggestions historiques. |
 | `versions` | `insert` | Snapshot immuable par version. |
 | `audits` | `insertMany` | Journal immuable des actions et changements de champ. |
+| `notifications` | `insert`, `listForRecipient` | Persiste les retours et resoumissions; la lecture est limitée à l’identifiant du destinataire. |
 | `validations` | `insert`, `findLatestByTreatmentIds` | Erreurs de règles associées à chaque version. |
 | `statistics` | `getAgentPerformance`, `getHomeSummary` | Agrège soumissions, resoumissions, KPI et métriques d’accueil. |
 | `idempotency` | `get`, `set` | Mémorise un résultat de sync par clé. |
@@ -216,9 +219,10 @@ dépôt mémoire prend un snapshot et restaure les collections/map si l’opéra
 [`backend/src/models/index.js`](./backend/src/models/index.js) définit les
 collections `Treatment`, `TreatmentVersion`, `AuditLog`, `ValidationResult`,
 `IdempotencyKey`, `FieldSuggestion`, `User`, `ActiveSession` et
-`DistributionGroup`. Les index matérialisent notamment l’unicité de la ligne
-source, l’historique ordonné par version, la recherche qualité, le TTL des
-sessions/idempotences et l’unicité d’une suggestion par champ et mot.
+`DistributionGroup`, `Notification`. Les index matérialisent notamment l’unicité
+de la ligne source, l’historique ordonné par version, la recherche qualité, le
+TTL des sessions/idempotences, les notifications triées par destinataire et
+l’unicité d’une suggestion par champ et mot.
 
 ## 6. Référence des fonctions frontend
 
@@ -233,15 +237,15 @@ Les fonctions ci-dessous sont définies dans
 | `getRoleLabel(role)` / `getRoleOptions()` | Présentation et liste des rôles utilisateurs. |
 | `formatEAT(date)` / `formatDateInput(date)` | Affichent heure/date au fuseau `Africa/Nairobi`, le second au format date de formulaire. |
 | `getNavigation(role)` | Produit les entrées de navigation accessibles selon le rôle. |
-| `NotificationBell({notifications})` | Affiche le panneau de notifications, ouvre/ferme les messages, suit le clic extérieur et propose le lien vers une ligne. |
+| `NotificationBell({notifications,error})` | Affiche les notifications personnelles reçues du backend, ouvre/ferme les messages, suit le clic extérieur et propose le lien vers la ligne concernée. |
 | `AppShell({user,…})` | Cadre des pages authentifiées : navigation, horloge, notifications, déconnexion et documentation latérale. |
 | `getSummaryCards(summary)` / `HomePage({user, storageMode})` | Préparent les KPI de l’accueil; `HomePage` recharge le résumé toutes les 30 secondes et affiche l’état de stockage. |
 | `QualityPage({users,user})` | Charge les pages de traitements QC, associe les profils aux lignes, filtre côté client, ouvre la ligne dans la distribution et envoie un retour de correction. Ses callbacks `loadTreatments`, `handleSendReturn`, `handleApplyFilters` et `sendFeedback` gèrent respectivement chargement/pagination, navigation, application des filtres et commentaire retour. |
-| `DataPage({users})` | Affiche les performances par agent avec filtres date/rôle/nom et lance les exports Excel ou Google Sheets. `exportSubmittedData()` traite téléchargement ou URL de copie; le `load()` de l’effet charge les KPI filtrés. |
+| `DataPage({users})` | Affiche une ligne agrégée par agent sur la période filtrée (lignes validées et retours rectifiés), avec filtres date/rôle/nom, et lance les exports Excel ou Google Sheets. Si le profil nominatif est indisponible, l’identifiant du compte remplace le nom plutôt qu’un libellé générique. `buildFilteredAgentRows()` agrège et filtre les journées; `exportSubmittedData()` traite téléchargement ou URL de copie; le `load()` de l’effet charge les KPI filtrés. |
 | `UserManagementPage({users,setUsers,currentUser})` | Filtre les utilisateurs, crée/modifie les comptes selon l’interface du rôle Admin/Superviseur, supprime les comptes autorisés. `handleSave()` et `handleDelete()` appellent l’API et réconcilient la liste locale. |
 | `GoogleSheetConnectionPage()` | `handleConnect()` soumet l’URL au plugin Sheets et présente le nombre de lignes ou l’erreur. |
 | `LoginPage({onLogin})` | `handleSubmit()` réalise la connexion, traite les réponses non JSON et présente les erreurs sans exposer de détails sensibles. |
-| `Application()` | Vérifie le health check et la session au montage, charge les utilisateurs accessibles, conserve les notifications locales, coordonne les appels de sauvegarde et construit les routes protégées par rôle. `saveDraft()` traduit l’index de ligne et envoie le traitement; `saveDistributionGroupStatus()` et `loadDistributionGroupStatuses()` pilotent les statuts des blocs; `handleLogin()`/`handleLogout()` mettent à jour l’état de session; `renderAuthenticatedRoutes()` décrit les routes disponibles. |
+| `Application()` | Vérifie le health check et la session au montage, charge les utilisateurs accessibles et les notifications du compte courant (rafraîchies toutes les 30 secondes), coordonne les appels de sauvegarde et construit les routes protégées par rôle. Les retours sont adressés à l’Agent de la ligne; une resoumission notifie l’Admin/Superviseur à l’origine du retour. `saveDraft()` traduit l’index de ligne et envoie le traitement; `saveDistributionGroupStatus()` et `loadDistributionGroupStatuses()` pilotent les statuts des blocs; `handleLogin()`/`handleLogout()` mettent à jour l’état de session; `renderAuthenticatedRoutes()` décrit les routes disponibles. |
 | `App()` | Monte l’application dans `BrowserRouter`. |
 
 ### Formulaire et règles de saisie

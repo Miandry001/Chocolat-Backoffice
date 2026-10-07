@@ -90,12 +90,6 @@ export function buildSubmittedValueUpdates(rows, treatments, sourceRange) {
   return updates;
 }
 
-export function isCompleteTreatmentSelection(treatments, allTreatments) {
-  const selectedRows = new Set(treatments.map(({ sourceRow }) => sourceRow));
-  const allRows = new Set(allTreatments.map(({ sourceRow }) => sourceRow));
-  return selectedRows.size === allRows.size && [...selectedRows].every((row) => allRows.has(row));
-}
-
 export function getUnselectedRowRanges(rows, treatments) {
   const selectedRows = new Set(treatments.map(({ sourceRow }) => sourceRow));
   const ranges = [];

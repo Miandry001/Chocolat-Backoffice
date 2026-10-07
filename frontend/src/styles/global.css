@@ -221,7 +221,7 @@ body.docs-open {
 }
 
 .data-table th {
-  background: var(--navy);
+  background: #337ab7;
   color: #FFFFFF;
   font-weight: 500;
 }
