@@ -20,3 +20,8 @@ export function createApp(repos, { bodyLimit = process.env.JSON_BODY_LIMIT ?? "2
   app.use(errorHandler);
   return app;
 }
+// Point d'entrée pour Vercel (ne sert pas en local, où server.js appelle createApp)
+export default async function handler(req, res) {
+  const { default: vercelHandler } = await import("./vercel.js");
+  return vercelHandler(req, res);
+}
