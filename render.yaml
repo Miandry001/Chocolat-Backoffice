@@ -1,0 +1,46 @@
+services:
+  # Backend API
+  - type: web
+    name: chocolat-backend
+    env: node
+    plan: free
+    buildCommand: cd backend && npm install
+    startCommand: cd backend && npm start
+    envVars:
+      - key: PORT
+        value: 3001
+      - key: NODE_ENV
+        value: production
+      - key: LOG_LEVEL
+        value: info
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: AUTH_BOOTSTRAP_ADMIN_LOGIN
+        sync: false
+      - key: AUTH_BOOTSTRAP_ADMIN_PASSWORD
+        sync: false
+      - key: APP_ORIGIN
+        sync: false
+
+  # Frontend (Static Site)
+  - type: web
+    name: chocolat-frontend
+    env: static
+    plan: free
+    buildCommand: cd frontend && npm install && npm run build
+    staticPublishPath: ./frontend/dist
+    envVars:
+      - key: VITE_API_TARGET
+        value: https://chocolat-backend.onrender.com
+      - key: GOOGLE_CREDENTIALS
+        sync: false
+      - key: SHEET_ID
+        sync: false
+      - key: GOOGLE_DRIVE_FOLDER_ID
+        sync: false
+      - key: APP_ORIGIN
+        value: https://chocolat-frontend.onrender.com
+      - key: SHEET_RANGE
+        value: "'référent'!A:ZZ"
