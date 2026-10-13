@@ -7,8 +7,11 @@ export default defineConfig(async ({ mode }) => {
   // Variables sans préfixe VITE_ : lues uniquement côté serveur, jamais exposées au navigateur.
   const env = loadEnv(mode, process.cwd(), "");
   const apiTarget = env.API_TARGET ?? "http://localhost:3001";
+  const isProduction = mode === "production";
+  const apiTargetUrl = new URL(apiTarget);
+  const connectSrc = isProduction ? apiTargetUrl.origin : "ws://localhost:5173 ws://127.0.0.1:5173";
   const securityHeaders = {
-    "Content-Security-Policy": "default-src 'self'; base-uri 'self'; object-src 'none'; script-src 'self'; worker-src 'self' blob:; form-action 'self'; frame-ancestors 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' ws://localhost:5173 ws://127.0.0.1:5173",
+    "Content-Security-Policy": `default-src 'self'; base-uri 'self'; object-src 'none'; script-src 'self'; worker-src 'self' blob:; form-action 'self'; frame-ancestors 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' ${connectSrc}`,
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "strict-origin-when-cross-origin",
   };
@@ -22,6 +25,10 @@ export default defineConfig(async ({ mode }) => {
       },
     },
     preview: { headers: securityHeaders },
+    // Exposer API_TARGET au frontend en production avec le préfixe VITE_
+    define: {
+      'import.meta.env.VITE_API_TARGET': JSON.stringify(apiTarget),
+    },
     plugins: [
       react(),
       clientErrorLogPlugin(),
